@@ -1,106 +1,125 @@
 TOOL.Category = "ACT"
 TOOL.Name = "Скилл"
-TOOL.ClientConVar["id"] = "defense"
-TOOL.ClientConVar["name"] = "Защита"
-TOOL.ClientConVar["desc"] = "Уменьшает получаемый урон в зависимости от вашего значения ЗЩТ. Повышает ПОТОК на 16%"
-TOOL.ClientConVar["cost"] = "0"
+
+TOOL.ClientConVar["id"] = "heal"
+TOOL.ClientConVar["name"] = "Heal Prayer"
+TOOL.ClientConVar["desc"] = "Восстанавливает немного здоровья."
+TOOL.ClientConVar["cost"] = "16"
+-- Новые ConVar для интеграции с твоей ритм-системой delta2
+TOOL.ClientConVar["chart"] = "default"
+TOOL.ClientConVar["no_rhythm"] = "0"
 
 if CLIENT then
     language.Add("tool.act_skill.name", "Выдача навыков")
     language.Add("tool.act_skill.desc", "ЛКМ: выдать игроку | ПКМ: выдать себе")
 
     function TOOL:BuildCPanel()
-        -- 1. Заголовок
-        self:AddControl("Header", { Description = "Настройка навыка" })
+        self:AddControl("Header", { Description = "Настройка и выдача кастомных навыков ACT" })
 
-        -- 2. ПРЕСЕТЫ (Теперь с плюсиком)
-        -- Folder: "act_skills" — это папка в garrysmod/settings/presets/act_skills
         self:AddControl("ComboBox", {
             Label = "Пресеты скиллов",
-            MenuButton = 1, -- Это активирует кнопку управления (плюсик/меню)
-            Folder = "act_skills", 
-            Options = {
-                ["Защита"] = {
-                    act_skill_id = "defense",
-                    act_skill_name = "Защита",
-                    act_skill_desc = "Уменьшает получаемый урон в зависимости от значения ЗЩТ. Повышает ПОТОК на 16%",
-                    act_skill_cost = "0"
-                }
-            },
-            CVars = {
-                "act_skill_id",
-                "act_skill_name",
-                "act_skill_desc",
-                "act_skill_cost"
-            }
+            MenuButton = 1,
+            Folder = "act_skills_presets", 
+            CVars = {"act_skill_id", "act_skill_name", "act_skill_desc", "act_skill_cost", "act_skill_chart", "act_skill_no_rhythm"}
         })
 
-        -- 3. Поля ввода
-        self:AddControl("TextBox", { Label = "ID (технический)", Command = "act_skill_id" })
-        self:AddControl("TextBox", { Label = "Название", Command = "act_skill_name" })
+        self:AddControl("TextBox", { Label = "ID скилла", Command = "act_skill_id" })
+        self:AddControl("TextBox", { Label = "Название скилла", Command = "act_skill_name" })
         
-        -- 4. Увеличенное поле для описания
         local label = vgui.Create("DLabel", self)
         label:SetText("Описание скилла:")
         label:SetDark(true)
         label:Dock(TOP)
-        label:DockMargin(10, 5, 10, 0)
         self:AddItem(label)
 
         local txt = vgui.Create("DTextEntry", self)
         txt:SetConVar("act_skill_desc")
         txt:SetMultiline(true) 
-        txt:SetTall(100) -- Сделал чуть повыше для удобства
-        txt:SetPlaceholderText("Введите описание здесь...")
+        txt:SetTall(100)
         txt:Dock(TOP)
-        txt:DockMargin(10, 0, 10, 5)
         self:AddItem(txt)
 
-        -- 5. Стоимость
-        self:AddControl("TextBox", { Label = "Стоимость (число)", Command = "act_skill_cost" })
+        self:AddControl("TextBox", { Label = "Стоимость (%)", Command = "act_skill_cost" })
+
+        -------------------------------------------------------------------------
+        -- ИНТЕГРАЦИЯ ЧАРТОВ ИЗ ТВОЕГО РЕПОЗИТОРИЯ
+        -------------------------------------------------------------------------
+        -- Выпадающий список чартов, зарегистрированных в твоем cl_rhythm.lua
+        local chartCombo = vgui.Create("DComboBox", self)
+        chartCombo:SetConVar("act_skill_chart")
+        chartCombo:Dock(TOP)
+        chartCombo:DockMargin(0, 10, 0, 5)
+        
+        -- Считываем чарты из твоей глобальной таблицы RhythmSystem
+        if RhythmSystem and RhythmSystem.Charts then
+            for chartName, _ in pairs(RhythmSystem.Charts) do
+                chartCombo:AddChoice(chartName, chartName)
+            end
+        else
+            -- Дефолтные чарты из твоего мода, если таблицы еще не инициализированы в памяти
+            chartCombo:AddChoice("default", "default")
+            chartCombo:AddChoice("hard", "hard")
+            chartCombo:AddChoice("chaos", "chaos")
+        end
+        chartCombo:ChooseOptionID(1)
+        self:AddItem(chartCombo)
+
+        -- Чекбокс отключения ритм-игры
+        local noRhythmCheck = vgui.Create("DCheckBoxLabel", self)
+        noRhythmCheck:SetText("Кастовать моментально (Без ритм-игры)")
+        noRhythmCheck:SetConVar("act_skill_no_rhythm")
+        noRhythmCheck:Dock(TOP)
+        noRhythmCheck:DockMargin(0, 5, 0, 0)
+        self:AddItem(noRhythmCheck)
     end
-end
-
--- Остальная часть (GiveSkill, LeftClick, RightClick) остается без изменений
-local function GiveSkill(target, owner, id, data)
-    if not IsValid(target) or not target:IsPlayer() then return end
-    
-    target.ActSkillsList = target.ActSkillsList or {}
-    target.ActSkillsList[id] = data
-
-    net.Start("UpdateActSkills")
-        net.WriteTable(target.ActSkillsList)
-    net.Send(target)
 end
 
 function TOOL:LeftClick(tr)
     if CLIENT then return true end
-    if not (IsValid(tr.Entity) and tr.Entity:IsPlayer()) then return false end
-    
-    local o = self:GetOwner()
-    local id = o:GetInfo("act_skill_id")
-    local skillData = {
-        name = o:GetInfo("act_skill_name"),
-        desc = o:GetInfo("act_skill_desc"),
-        cost = tonumber(o:GetInfo("act_skill_cost")) or 0
-    }
-    
-    GiveSkill(tr.Entity, o, id, skillData)
-    o:ChatPrint("Вы выдали навык '" .. skillData.name .. "' игроку " .. tr.Entity:Nick())
+    local ent = tr.Entity
+    if IsValid(ent) and ent:IsPlayer() then self:DoGive(ent) end
     return true
 end
 
 function TOOL:RightClick(tr)
     if CLIENT then return true end
-    local o = self:GetOwner()
-    local id = o:GetInfo("act_skill_id")
+    self:DoGive(self:GetOwner())
+    return true
+end
+
+function TOOL:DoGive(target)
+    local owner = self:GetOwner()
+    if not IsValid(owner) or not IsValid(target) then return end
+
+    local id = owner:GetInfo("act_skill_id") or "heal"
     local skillData = {
-        name = o:GetInfo("act_skill_name"),
-        desc = o:GetInfo("act_skill_desc"),
-        cost = tonumber(o:GetInfo("act_skill_cost")) or 0
+        name = owner:GetInfo("act_skill_name") or "Скилл",
+        desc = owner:GetInfo("act_skill_desc") or "",
+        cost = tonumber(owner:GetInfo("act_skill_cost")) or 0,
+        -- Передаем настройки ритм-игры внутрь структуры скилла игрока
+        chart = owner:GetInfo("act_skill_chart") or "default",
+        no_rhythm = tonumber(owner:GetInfo("act_skill_no_rhythm")) or 0
     }
     
-    GiveSkill(o, o, id, skillData)
-    o:ChatPrint("Вы выдали навык '" .. skillData.name .. "' себе")
-    return true
+    target.ActSkillsList = target.ActSkillsList or {}
+    target.ActSkillsList[id] = skillData
+    
+    net.Start("UpdateActSkills")
+        net.WriteTable(target.ActSkillsList)
+    net.Send(target)
+    
+    -- Скрытое оповещение для админов (чистый текст, без мусора)
+    for _, ply in ipairs(player.GetAll()) do
+        if IsValid(ply) and (ply:IsAdmin() or ply:IsSuperAdmin()) then
+            ply:SendLua([[
+                chat.AddText(
+                    Color(135, 206, 250), "]] .. owner:Nick() .. [[", 
+                    Color(255, 255, 255), " выдал скилл \"", 
+                    Color(255, 160, 0), "]] .. skillData.name .. [[", 
+                    Color(255, 255, 255), "\" игроку ", 
+                    Color(135, 206, 250), "]] .. target:Nick() .. [["
+                )
+            ]])
+        end
+    end
 end
